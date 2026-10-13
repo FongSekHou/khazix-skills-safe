@@ -24,21 +24,82 @@ scan = load_scan_module()
 
 
 class StaticReportSecurityTests(unittest.TestCase):
-    def analysis(self, path):
+    def analysis_data(self):
         payload = "</script><script>window.pwned=1</script>&\u2028\u2029"
-        path.write_text(json.dumps({
+        return {
             "generated_at": "2026-10-09 10:00:00",
             "scan_seconds": 1,
-            "system": {"os": "Windows", "build": "test", "arch": "x64", "user": payload, "home": "C:\\Users\\test", "filesystem": "NTFS", "disk_total": "100 GB", "disk_used": "50 GB", "disk_free": "50 GB"},
-            "green": [{"name": payload, "path": payload, "size_estimate": "约 1 GB", "commands": [{"label": payload, "cmd": "echo safe"}]}],
-            "summary": {"overview": payload, "priority": [payload], "tier_stats": {"green": "1 GB", "yellow": "0 GB", "red": "0 GB"}}
-        }, ensure_ascii=False), encoding="utf-8")
+            "system": {
+                "os": "Windows",
+                "build": "test",
+                "arch": "x64",
+                "user": payload,
+                "home": "C:\\Users\\test",
+                "filesystem": "NTFS",
+                "disk_total": "100 GB",
+                "disk_used": "50 GB",
+                "disk_free": "50 GB",
+            },
+            "top5": [{
+                "rank": 1,
+                "tier": "green",
+                "size": "1 GB",
+                "type": "缓存",
+                "name": payload,
+                "path": payload,
+                "note": "安全测试",
+            }],
+            "green": [{
+                "name": payload,
+                "path": payload,
+                "size_estimate": "约 1 GB",
+                "kill_processes": [],
+                "commands": [{"label": payload, "cmd": "echo safe"}],
+            }],
+            "yellow": [{
+                "name": "需要人工判断的测试项",
+                "path": "C:\\test",
+                "size_estimate": "1 GB",
+                "content_profile": "测试数据",
+                "why_manual": "测试",
+                "disposal": "测试",
+                "risk": "测试",
+            }],
+            "red": [{
+                "name": "谨慎清理的测试项",
+                "path": "C:\\test-app",
+                "size_estimate": "1 GB",
+                "why_keep": "测试",
+                "indirect_release": "测试",
+            }],
+            "denied": ["C:\\denied"],
+            "warnings": ["测试警告", {"path": "C:\\partial", "reason": "测试预算"}],
+            "summary": {
+                "overview": payload,
+                "priority": [payload],
+                "long_term": ["测试长期建议"],
+                "tier_stats": {"green": "1 GB", "yellow": "1 GB", "red": "1 GB"},
+            },
+        }
+
+    def write_analysis(self, path, data=None):
+        path.write_text(
+            json.dumps(data if data is not None else self.analysis_data(), ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def build(self, source, output):
+        return subprocess.run(
+            [sys.executable, str(BUILD), str(source), str(output)],
+            capture_output=True,
+            text=True,
+        )
 
     def test_static_report_escapes_script_terminator(self):
         with tempfile.TemporaryDirectory() as directory:
             source, output = Path(directory) / "analysis.json", Path(directory) / "report.html"
-            self.analysis(source)
-            result = subprocess.run([sys.executable, str(BUILD), str(source), str(output)], capture_output=True, text=True)
+            self.write_analysis(source)
+            result = self.build(source, output)
             self.assertEqual(result.returncode, 0, result.stderr)
             report = output.read_text(encoding="utf-8")
             self.assertNotIn("</script><script>window.pwned=1</script>", report)
@@ -48,11 +109,34 @@ class StaticReportSecurityTests(unittest.TestCase):
     def test_static_report_has_no_action_surface(self):
         with tempfile.TemporaryDirectory() as directory:
             source, output = Path(directory) / "analysis.json", Path(directory) / "report.html"
-            self.analysis(source)
+            self.write_analysis(source)
             subprocess.run([sys.executable, str(BUILD), str(source), str(output)], check=True, capture_output=True, text=True)
             report = output.read_text(encoding="utf-8")
             for forbidden in ("/action", "fetch(", "server.py", "__DELETE_CONFIG__", "直接删除", "移到废纸篓"):
                 self.assertNotIn(forbidden, report)
+
+    def test_static_report_rejects_wrong_field_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / "analysis.json", Path(directory) / "report.html"
+            invalid = self.analysis_data()
+            invalid["system"] = {"total": "100 GB", "used": "50 GB", "free": "50 GB"}
+            self.write_analysis(source, invalid)
+            result = self.build(source, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("分析报告输入无效", result.stderr)
+            self.assertIn("system.os", result.stderr)
+            self.assertFalse(output.exists())
+
+    def test_static_report_rejects_mismatched_section_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / "analysis.json", Path(directory) / "report.html"
+            invalid = self.analysis_data()
+            invalid["summary"] = "错误的摘要类型"
+            self.write_analysis(source, invalid)
+            result = self.build(source, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("summary 必须是对象", result.stderr)
+            self.assertFalse(output.exists())
 
 
 class ScanBoundaryTests(unittest.TestCase):

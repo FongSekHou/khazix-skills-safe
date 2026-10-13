@@ -48,13 +48,41 @@ py -3 scripts/scan.py > "$env:TEMP\storage_scan.json"
 
 ### Step 3：生成静态只读报告
 
-将分析结果写为 JSON（字段可选：`system`、`top5`、`green`、`yellow`、`red`、`denied`、`warnings`、`summary`），然后生成单文件报告：
+先将分析结果写为 UTF-8 JSON。`build_report.py` 会在生成前校验 schema；校验失败时退出码为 `2` 并列出具体字段，不会生成误导性的空白或残缺报告。
+
+#### 必填字段
+
+```text
+generated_at: 非空字符串
+scan_seconds: 非负数字
+system: {
+  os, build, arch, user, home, filesystem,
+  disk_total, disk_used, disk_free
+}
+```
+
+#### 可选区块的字段契约
+
+可省略整个区块；一旦提供，必须符合对应结构：
+
+| 区块 | 条目字段 |
+| --- | --- |
+| `top5` | `{rank, tier: green\|yellow\|red, size, type, name, path, note}` |
+| `green` | `{name, path, size_estimate 或 size, kill_processes?: string[], commands?: [{label, cmd}]}` |
+| `yellow` | `{name, path, size_estimate 或 size, content_profile, why_manual, disposal, risk}` |
+| `red` | `{name, path, size_estimate 或 size, why_keep, indirect_release}` |
+| `denied` | 路径字符串数组 |
+| `warnings` | 字符串数组，或 `{path, reason}` 数组 |
+| `summary` | `{overview, tier_stats: {green, yellow, red}, priority?, long_term?}` |
+
+生成命令：
 
 ```bash
 # macOS
 python3 scripts/build_report.py /tmp/storage_analysis.json ~/Desktop/storage-report.html
 
 # Windows PowerShell
+$env:PYTHONIOENCODING = 'utf-8'
 py -3 scripts/build_report.py "$env:TEMP\storage_analysis.json" "$HOME\Desktop\storage-report.html"
 ```
 
